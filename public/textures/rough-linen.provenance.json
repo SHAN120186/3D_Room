@@ -1,0 +1,47 @@
+{
+  "asset": "rough_linen",
+  "title": "Rough Linen",
+  "source": "https://polyhaven.com/a/rough_linen",
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "authors": {
+    "colormass": "Photography",
+    "Rico Cilliers": "Processing"
+  },
+  "obtained": "2026-11-22",
+  "files": [
+    {
+      "channel": "Diffuse",
+      "file": "rough_linen_diff_1k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rough_linen/rough_linen_diff_1k.jpg",
+      "bytes": 835801,
+      "md5": "663db789fb075462b685c1f740e58930",
+      "sha256": "04897d7611d7390ddf5b2c6f7273f448dfc48341fdbd1f4f207fa30b331d7f57"
+    },
+    {
+      "channel": "nor_gl",
+      "file": "rough_linen_nor_gl_1k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rough_linen/rough_linen_nor_gl_1k.jpg",
+      "bytes": 916843,
+      "md5": "3350269a2e9c472aa406bd3cc1eaf2c8",
+      "sha256": "e2402166d1a489f7414814e69e1836ab672aa24e30bec2d41fea356f81687e53"
+    },
+    {
+      "channel": "Rough",
+      "file": "rough_linen_rough_1k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rough_linen/rough_linen_rough_1k.jpg",
+      "bytes": 1083725,
+      "md5": "a380b24cc43cff88c39510305ebf0020",
+      "sha256": "734ad6718841a6e296aacaa6e9ee2e1686eed5f62bb8d71c915c5605e162bcb4"
+    }
+  ],
+  "dimensions_mm": [
+    270.7081392676629,
+    271.29998803138733
+  ],
+  "physical_repeat_cm": [
+    27.070813926766288,
+    27.129998803138733
+  ],
+  "physical_scale_note": "Official asset page gives 37.8 px/cm at 1K, consistent with the API dimensions in mm."
+}

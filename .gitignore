@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.sites/
+.openai/*.tar.gz
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+coverage/
+test-results/
