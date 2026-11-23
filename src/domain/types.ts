@@ -14,7 +14,9 @@ export interface Collider { xCm: number; yCm: number; zCm: number; widthCm: numb
 export interface CatalogItem { id: string; name: string; category: string; roomTypes: RoomType[]; kind: FurnitureKind; widthCm: number; depthCm: number; heightCm: number; placement: Placement; layer: 'solid' | 'rug'; color: string; mountHeightCm?: number; colliders?: Collider[]; description: string }
 export interface FurnitureInstance extends Point { id: string; catalogItemId: string; roomId: string; yCm: number; angleDeg: number; color: string; wallId?: string; supportId?: string }
 export interface Apartment { id: string; templateId: string; name: string; ceilingHeightCm: number; vertices: Record<string, Vertex>; walls: Record<string, Wall>; rooms: Room[]; openings: Opening[]; furniture: FurnitureInstance[]; wallFinishes: Record<string, WallFinish> }
-export interface LayoutTemplate { id: string; name: string; livingRooms: 1 | 2 | 3; description: string; kitchen: string; bathroom: string; apartment: Apartment }
+/** 0 — студия, 1–4 — число жилых комнат на стартовом экране. */
+export type RoomChoice = 0 | 1 | 2 | 3 | 4;
+export interface LayoutTemplate { id: string; name: string; livingRooms: 1 | 2 | 3 | 4; choices: RoomChoice[]; description: string; kitchen: string; bathroom: string; apartment: Apartment }
 export interface Rect { xMin: number; xMax: number; zMin: number; zMax: number }
 export interface Validation { valid: boolean; code?: string; reason?: string; conflicts?: string[] }
 export type Selection = { kind: 'wall' | 'opening' | 'furniture'; id: string } | null;
