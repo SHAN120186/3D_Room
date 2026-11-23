@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Hand, Minus, Plus, Scan } from 'lucide-react';
 import type { Apartment, FurnitureInstance, Opening, Point } from '../domain/types';
@@ -11,6 +11,7 @@ interface Props { project?: Apartment; readOnly?: boolean; compact?: boolean; sh
 export default function Plan2D({project: supplied, readOnly=false, compact=false, showDimensions=true, fitActive=false}: Props) {
   const state=useEditor();
   const project=supplied??state.geometryPreview?.project??state.project;
+  const gridId=useId().replace(/:/g,'');
   const svgRef=useRef<SVGSVGElement>(null);
   const shell=useRef<HTMLDivElement>(null);
   const [size,setSize]=useState({w:700,h:500});
@@ -30,7 +31,9 @@ export default function Plan2D({project: supplied, readOnly=false, compact=false
   const bounds=rooms.map(r=>getRoomBounds(fitProject,r.id,false));
   const minX=Math.min(...bounds.map(b=>b.xMin)),maxX=Math.max(...bounds.map(b=>b.xMax));
   const minZ=Math.min(...bounds.map(b=>b.zMin)),maxZ=Math.max(...bounds.map(b=>b.zMax));
-  const padding=compact?40:Math.max(75,(maxX-minX)*.06);
+  const basePadding=compact?40:Math.max(75,(maxX-minX)*.06);
+  const roughScale=Math.min(size.w/(maxX-minX+basePadding*2),size.h/(maxZ-minZ+basePadding*2))||1;
+  const padding=compact||!showDimensions?basePadding:Math.max(basePadding,32/roughScale);
   const vw=(maxX-minX+padding*2)/zoom,vh=(maxZ-minZ+padding*2)/zoom;
   const vx=(minX+maxX-vw)/2+pan.x,vz=(minZ+maxZ-vh)/2+pan.z;
   const scale=Math.min(size.w/vw,size.h/vh)||1;
@@ -58,6 +61,7 @@ export default function Plan2D({project: supplied, readOnly=false, compact=false
   return <div className={`plan-shell${compact?' compact':''}${readOnly?' readonly':''}`} ref={shell}>
     <svg ref={svgRef} className={`plan-svg${hand?' pan-mode':''}${state.placement&&!readOnly?' placement-mode':''}`} viewBox={`${vx} ${vz} ${vw} ${vh}`} aria-label="План квартиры в сантиметрах" onPointerMove={onMove} onPointerDown={onDown} onPointerUp={onUp} onPointerCancel={cancel} onLostPointerCapture={cancel} onContextMenu={e=>e.preventDefault()}>
       <title>План квартиры. Все линейные размеры указаны в сантиметрах.</title>
+      {!compact&&<><defs><pattern id={`${gridId}-minor`} width={50} height={50} patternUnits="userSpaceOnUse"><path d="M50 0H0V50" fill="none" stroke="var(--plan-grid)" strokeWidth={1/scale}/></pattern><pattern id={`${gridId}-major`} width={100} height={100} patternUnits="userSpaceOnUse"><path d="M100 0H0V100" fill="none" stroke="var(--plan-grid-major)" strokeWidth={1/scale}/></pattern></defs><g className="plan-grid" pointerEvents="none" aria-hidden="true"><rect x={vx} y={vz} width={vw} height={vh} fill={`url(#${gridId}-minor)`}/><rect x={vx} y={vz} width={vw} height={vh} fill={`url(#${gridId}-major)`}/></g></>}
       {rooms.map(room=>{const b=getRoomBounds(p,room.id,true),active=!readOnly&&state.activeRoomId===room.id;return <g key={room.id}>
         <rect x={b.xMin} y={b.zMin} width={b.xMax-b.xMin} height={b.zMax-b.zMin} fill={`var(--room-${room.type})`} className={active?'room-active':'room-floor'} onClick={()=>{if(!readOnly&&!state.placement&&!dragging.current)state.setActiveRoom(room.id)}}/>
         {!compact&&<text className="plan-room-label" x={(b.xMin+b.xMax)/2} y={(b.zMin+b.zMax)/2-textSize*.35} textAnchor="middle" fontSize={textSize} pointerEvents="none"><tspan>{room.name}</tspan><tspan x={(b.xMin+b.xMax)/2} dy={textSize*1.5} className="plan-room-area" fontSize={textSize*.9}>{format.format(getRoomArea(p,room.id))} м²</tspan></text>}
@@ -73,12 +77,14 @@ export default function Plan2D({project: supplied, readOnly=false, compact=false
       </g>})}
       {p.furniture.filter(item=>roomIds.has(item.roomId)&&!(state.draft?.id===item.id&&!readOnly)).map(item=>drawFurniture(item))}
       {!readOnly&&state.draft&&roomIds.has(state.draft.roomId)&&drawFurniture(state.draft,true)}
-      {showDimensions&&!compact&&<g className="plan-dimensions" fontSize={textSize*.85} stroke="var(--plan-dimension)" strokeWidth={.8/scale}>
-        <path d={`M${minX} ${minZ-padding*.55}H${maxX}M${minX} ${minZ-padding*.7}v${padding*.3}M${maxX} ${minZ-padding*.7}v${padding*.3}`} fill="none"/>
-        <text x={(minX+maxX)/2} y={minZ-padding*.62} textAnchor="middle" stroke="none">{Math.round(maxX-minX)} см</text>
-        <path d={`M${maxX+padding*.55} ${minZ}V${maxZ}M${maxX+padding*.4} ${minZ}h${padding*.3}M${maxX+padding*.4} ${maxZ}h${padding*.3}`} fill="none"/>
-        <text x={maxX+padding*.65} y={(minZ+maxZ)/2} transform={`rotate(90 ${maxX+padding*.65} ${(minZ+maxZ)/2})`} textAnchor="middle" stroke="none">{Math.round(maxZ-minZ)} см</text>
-      </g>}
+      {showDimensions&&!compact&&(()=>{const t=6/scale,top=minZ-padding*.55,right=maxX+padding*.55;const tick=(x:number,z:number)=>`M${x-t} ${z+t}L${x+t} ${z-t}`;return <g className="plan-dimensions" fontSize={textSize*.85}>
+        <path className="dim-line" d={`M${minX-t*1.6} ${top}H${maxX+t*1.6}M${minX} ${minZ-padding*.18}V${top-t*1.8}M${maxX} ${minZ-padding*.18}V${top-t*1.8}`} fill="none" strokeWidth={.8/scale}/>
+        <path className="dim-tick" d={tick(minX,top)+tick(maxX,top)} fill="none" strokeWidth={1.8/scale}/>
+        <text x={(minX+maxX)/2} y={top-textSize*.45} textAnchor="middle">{Math.round(maxX-minX)} см</text>
+        <path className="dim-line" d={`M${right} ${minZ-t*1.6}V${maxZ+t*1.6}M${maxX+padding*.18} ${minZ}H${right+t*1.8}M${maxX+padding*.18} ${maxZ}H${right+t*1.8}`} fill="none" strokeWidth={.8/scale}/>
+        <path className="dim-tick" d={tick(right,minZ)+tick(right,maxZ)} fill="none" strokeWidth={1.8/scale}/>
+        <text x={right+textSize*.45} y={(minZ+maxZ)/2} transform={`rotate(90 ${right+textSize*.45} ${(minZ+maxZ)/2})`} textAnchor="middle">{Math.round(maxZ-minZ)} см</text>
+      </g>})()}
     </svg>
     {!compact&&!readOnly&&<div className="plan-controls" aria-label="Масштаб плана"><button className={`icon-button${hand?' selected':''}`} aria-label="Перемещать план" title="Перемещать план" aria-pressed={hand} onClick={()=>setHand(!hand)}><Hand size={18}/></button><button className="icon-button" aria-label="Уменьшить план" title="Уменьшить план" onClick={()=>setZoom(v=>Math.max(.55,v/1.2))}><Minus size={18}/></button><span className="zoom-label">{Math.round(zoom*100)}%</span><button className="icon-button" aria-label="Увеличить план" title="Увеличить план" onClick={()=>setZoom(v=>Math.min(3,v*1.2))}><Plus size={18}/></button><button className="icon-button" aria-label="Показать план целиком" title="Показать план целиком" onClick={()=>{setZoom(1);setPan({x:0,z:0})}}><Scan size={18}/></button></div>}
   </div>
