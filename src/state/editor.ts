@@ -1,18 +1,21 @@
 import { create } from 'zustand';
-import type { Apartment, EditorStep, FloorFinish, FurnitureInstance, GeometryPreview, Opening, QualityStatus, Selection, Validation, WallFinish } from '../domain/types';
+import type { Apartment, EditorStep, FloorFinish, FurnitureInstance, GeometryPreview, Opening, Point, QualityStatus, RoomChoice, Selection, Validation, WallFinish } from '../domain/types';
 import { getCatalogItem } from '../domain/catalog';
 import { TEMPLATES } from '../domain/templates';
 import { normalizeSupport, proposeWallMove, rotatePoint, validateApartment, VALID } from '../domain/geometry';
+import { calibrateUnderlay, createUnderlay, fitUnderlay, rotateUnderlay } from './underlay';
+import type { Underlay, UnderlaySource, UnderlayTool } from './underlay';
 
 const newQuality = (): QualityStatus => ({ running: false, samples: 0, seconds: 0, error: null, complete: false });
 export interface EditorStore {
-  project: Apartment | null; step: EditorStep; livingRooms: 1 | 2 | 3; requestedArea: string;
+  project: Apartment | null; step: EditorStep; livingRooms: RoomChoice; requestedArea: string;
   activeRoomId: string; selection: Selection; viewMode: 'split' | '2d' | '3d'; planOverview: boolean;
   timeOfDay: number; walking: boolean; quality: QualityStatus; webglAvailable: boolean | null;
   placement: string | null; draft: FurnitureInstance | null; draftValidation: Validation; placementAngle: number;
   geometryPreview: GeometryPreview | null; notice: string | null;
   history: Apartment[]; future: Apartment[]; dirty: boolean;
-  setStep: (step: EditorStep) => void; setLivingRooms: (n: 1 | 2 | 3) => void; setArea: (value: string) => void;
+  underlay: Underlay | null; underlayTool: UnderlayTool; calibration: Point[];
+  setStep: (step: EditorStep) => void; setLivingRooms: (n: RoomChoice) => void; setArea: (value: string) => void;
   chooseTemplate: (id: string, force?: boolean) => boolean;
   setActiveRoom: (id: string) => void; select: (selection: Selection) => void;
   setView: (view: 'split' | '2d' | '3d') => void; toggleOverview: () => void; setTime: (time: number) => void;
@@ -25,6 +28,8 @@ export interface EditorStore {
   setWallFinish: (wallId: string, roomId: string, finish: WallFinish) => void; setFloor: (roomId: string, finish: FloorFinish) => void;
   toggleRoomLight: (roomId: string) => void; undo: () => void; redo: () => void; setNotice: (notice: string | null) => void;
   applyProject: (project: Apartment) => Validation;
+  attachUnderlay: (source: UnderlaySource) => void; removeUnderlay: () => void; updateUnderlay: (patch: Partial<Pick<Underlay, 'xCm' | 'zCm' | 'opacity' | 'invert' | 'visible'>>) => void;
+  turnUnderlay: () => void; refitUnderlay: () => void; setUnderlayTool: (tool: UnderlayTool) => void; addCalibrationPoint: (point: Point) => void; applyCalibration: (realCm: number) => boolean;
 }
 
 /** A supported lamp follows its table in the same atomic command and is also collision-checked. */
@@ -43,8 +48,8 @@ export const useEditor = create<EditorStore>((set, get) => ({
   project: null, step: 'start', livingRooms: 2, requestedArea: '68', activeRoomId: '', selection: null,
   viewMode: 'split', planOverview: false, timeOfDay: 14, walking: false, quality: newQuality(), webglAvailable: null,
   placement: null, draft: null, draftValidation: VALID, placementAngle: 0, geometryPreview: null, notice: null,
-  history: [], future: [], dirty: false,
-  setStep: step => set({ step, placement: null, draft: null, draftValidation: VALID, walking: false, quality: newQuality(), geometryPreview: null, notice: null }),
+  history: [], future: [], dirty: false, underlay: null, underlayTool: 'none', calibration: [],
+  setStep: step => set({ step, underlayTool: 'none', calibration: [], placement: null, draft: null, draftValidation: VALID, walking: false, quality: newQuality(), geometryPreview: null, notice: null }),
   setLivingRooms: livingRooms => set({ livingRooms }),
   setArea: requestedArea => set({ requestedArea }),
   chooseTemplate: (id, force = false) => {
@@ -54,7 +59,8 @@ export const useEditor = create<EditorStore>((set, get) => ({
     if (state.project && state.dirty && !force) return false;
     const project = structuredClone(template.apartment), validation = validateApartment(project);
     if (!validation.valid) { set({ notice: validation.reason }); return false; }
-    set({ project, activeRoomId: project.rooms[0].id, step: 'geometry', selection: null, placement: null, draft: null, draftValidation: VALID, geometryPreview: null, history: [], future: [], dirty: false, quality: newQuality(), walking: false, notice: null });
+    const underlay = state.underlay && !state.underlay.fitted ? fitUnderlay(state.underlay, project) : state.underlay;
+    set({ project, underlay, underlayTool: 'none', calibration: [], activeRoomId: project.rooms[0].id, step: 'geometry', selection: null, placement: null, draft: null, draftValidation: VALID, geometryPreview: null, history: [], future: [], dirty: false, quality: newQuality(), walking: false, notice: null });
     return true;
   },
   setActiveRoom: id => { if (id !== get().activeRoomId && get().project?.rooms.some(r => r.id === id)) set({ activeRoomId: id, selection: null, placement: null, draft: null, draftValidation: VALID, quality: newQuality(), geometryPreview: null, notice: null }); },
@@ -67,6 +73,26 @@ export const useEditor = create<EditorStore>((set, get) => ({
   setWebglAvailable: available => set({ webglAvailable: available, ...(available === false ? { quality: newQuality(), walking: false } : {}) }),
   updateQuality: partial => set(s => ({ quality: { ...s.quality, ...partial } })),
   setNotice: notice => set({ notice }),
+  attachUnderlay: source => {
+    const { underlay: previous, project } = get();
+    if (previous && previous.url !== source.url) URL.revokeObjectURL(previous.url);
+    const created = createUnderlay(source);
+    set({ underlay: project ? fitUnderlay(created, project) : created, underlayTool: 'none', calibration: [], notice: null });
+  },
+  removeUnderlay: () => { const { underlay } = get(); if (underlay) URL.revokeObjectURL(underlay.url); set({ underlay: null, underlayTool: 'none', calibration: [] }); },
+  updateUnderlay: patch => { const { underlay } = get(); if (underlay) set({ underlay: { ...underlay, ...patch } }); },
+  turnUnderlay: () => { const { underlay } = get(); if (underlay) set({ underlay: rotateUnderlay(underlay), calibration: [] }); },
+  refitUnderlay: () => { const { underlay, project } = get(); if (underlay && project) set({ underlay: fitUnderlay(underlay, project), calibration: [] }); },
+  setUnderlayTool: underlayTool => set({ underlayTool, calibration: [], selection: null, geometryPreview: null, placement: null, draft: null, draftValidation: VALID, notice: null }),
+  addCalibrationPoint: point => set(s => ({ calibration: s.calibration.length >= 2 ? [point] : [...s.calibration, point] })),
+  applyCalibration: realCm => {
+    const { underlay, calibration } = get();
+    if (!underlay || calibration.length !== 2) return false;
+    const next = calibrateUnderlay(underlay, calibration[0], calibration[1], realCm);
+    if (!next) { set({ notice: 'Отметьте две разные точки и введите длину больше 0 см.' }); return false; }
+    set({ underlay: next, underlayTool: 'none', calibration: [], notice: 'Масштаб фото задан. Сдвиньте фото, чтобы стены совпали с планом.' });
+    return true;
+  },
   applyProject: project => {
     const state = get(), validation = validateApartment(project);
     if (!validation.valid) { set({ notice: validation.reason }); return validation; }
@@ -199,6 +225,7 @@ export function installKeyboardShortcuts(): () => void {
     const state = useEditor.getState(); if (!state.project) return;
     if ((event.ctrlKey || event.metaKey) && event.code === 'KeyZ') { event.preventDefault(); event.shiftKey ? state.redo() : state.undo(); return; }
     if ((event.ctrlKey || event.metaKey) && event.code === 'KeyY') { event.preventDefault(); state.redo(); return; }
+    if (event.code === 'Escape' && state.underlayTool !== 'none') { event.preventDefault(); state.setUnderlayTool('none'); return; }
     if (event.code === 'Escape') { event.preventDefault(); state.cancelDraft(); state.cancelGeometry(); if (state.quality.running || state.quality.complete) state.setQuality(false); if (state.walking) state.setWalking(false); return; }
     if (state.step !== 'interior' || state.walking || event.ctrlKey || event.metaKey) return;
     if (event.code === 'KeyR') { event.preventDefault(); state.rotateSelected(event.shiftKey ? -15 : 15); return; }

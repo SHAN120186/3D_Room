@@ -5,7 +5,7 @@ import {
   getWallSegment, normalizeSupport, openingWorld, parseCm, polygonsOverlap,
   proposeWallMove, squareCmToM2, validateApartment, validateFurniture, wallRoomIds,
 } from './geometry';
-import { apartmentFromRectangles, TEMPLATES } from './templates';
+import { apartmentFromRectangles, TEMPLATES, templatesForChoice } from './templates';
 import type { Apartment, FurnitureInstance, FurnitureKind } from './types';
 
 /** Clear dimensions are 400×300 and 200×300 cm, with one 10 cm partition. */
@@ -22,11 +22,20 @@ function furniture(kind: FurnitureKind, patch: Partial<FurnitureInstance> = {}):
 const sharedWall = (project: Apartment) => Object.values(project.walls).find(wall => wallRoomIds(project, wall.id).length === 2)!;
 
 describe('template geometry and units', () => {
-  const expectedAreas: Record<string, number> = { '1a': 36.8, '1b': 45.5, '1c': 46.7, '2a': 57.2, '2b': 69.2, '2c': 68.3, '3a': 79.8, '3b': 90.7, '3c': 87.4 };
-  it('provides exactly three choices for each living-room count', () => {
-    expect(TEMPLATES).toHaveLength(9);
-    expect(new Set(TEMPLATES.map(t => t.id)).size).toBe(9);
-    for (const count of [1, 2, 3]) expect(TEMPLATES.filter(t => t.livingRooms === count)).toHaveLength(3);
+  const expectedAreas: Record<string, number> = { '1a': 36.8, '1b': 45.5, '1c': 46.7, '2a': 57.2, '2b': 69.2, '2c': 68.3, '3a': 79.8, '3b': 90.7, '3c': 87.4, '1d': 31.3, '2d': 65.1, '3d': 71.3, '4a': 81.2, '4b': 91.5 };
+  // Composition: separate kitchen, separate toilet, hall. The open studio has no hall.
+  const composition: Record<string, { kitchen: number; toilet: number; hall: number }> = {
+    '1a': { kitchen: 0, toilet: 0, hall: 1 }, '1b': { kitchen: 1, toilet: 0, hall: 1 }, '1c': { kitchen: 1, toilet: 1, hall: 1 },
+    '2a': { kitchen: 0, toilet: 0, hall: 1 }, '2b': { kitchen: 1, toilet: 0, hall: 1 }, '2c': { kitchen: 1, toilet: 1, hall: 1 },
+    '3a': { kitchen: 0, toilet: 0, hall: 1 }, '3b': { kitchen: 1, toilet: 0, hall: 1 }, '3c': { kitchen: 1, toilet: 1, hall: 1 },
+    '1d': { kitchen: 0, toilet: 0, hall: 0 }, '2d': { kitchen: 1, toilet: 0, hall: 1 }, '3d': { kitchen: 1, toilet: 0, hall: 1 },
+    '4a': { kitchen: 0, toilet: 1, hall: 1 }, '4b': { kitchen: 1, toilet: 0, hall: 1 },
+  };
+  it('keeps the original nine schemes first and offers at least two for every start choice', () => {
+    expect(TEMPLATES.map(t => t.id)).toEqual(['1a', '1b', '1c', '2a', '2b', '2c', '3a', '3b', '3c', '1d', '2d', '3d', '4a', '4b']);
+    for (const choice of [0, 1, 2, 3, 4] as const) expect(templatesForChoice(choice).length, `choice ${choice}`).toBeGreaterThanOrEqual(2);
+    expect(templatesForChoice(0).map(t => t.id)).toEqual(['1a', '1d']);
+    for (const t of TEMPLATES) for (const choice of t.choices) expect(choice === 0 || choice === t.livingRooms).toBe(true);
   });
   it.each(TEMPLATES)('$id is empty, connected and has its agreed composition and computed area', template => {
     const p = template.apartment;
@@ -34,10 +43,12 @@ describe('template geometry and units', () => {
     expect(validation.valid, validation.reason).toBe(true);
     expect(p.furniture).toEqual([]);
     expect(p.rooms.filter(r => r.type === 'living' || r.type === 'bedroom')).toHaveLength(template.livingRooms);
-    expect(p.rooms.filter(r => r.type === 'hall')).toHaveLength(1);
+    expect(p.rooms.filter(r => r.type === 'hall')).toHaveLength(composition[template.id].hall);
     expect(p.rooms.filter(r => r.type === 'bathroom')).toHaveLength(1);
-    expect(p.rooms.filter(r => r.type === 'kitchen')).toHaveLength(template.id.endsWith('a') ? 0 : 1);
-    expect(p.rooms.filter(r => r.type === 'toilet')).toHaveLength(template.id.endsWith('c') ? 1 : 0);
+    expect(p.rooms.filter(r => r.type === 'kitchen')).toHaveLength(composition[template.id].kitchen);
+    expect(p.rooms.filter(r => r.type === 'toilet')).toHaveLength(composition[template.id].toilet);
+    expect(p.openings.filter(o => o.id === 'entrance')).toHaveLength(1);
+    for (const r of p.rooms.filter(r => ['living', 'bedroom', 'kitchen'].includes(r.type))) expect(p.openings.some(o => o.kind === 'window' && wallRoomIds(p, o.wallId)[0] === r.id), `${template.id}: окно в «${r.name}»`).toBe(true);
     expect(Math.abs(getNetArea(p) - expectedAreas[template.id])).toBeLessThan(0.15);
     expect(getGrossArea(p)).toBeGreaterThan(getNetArea(p));
 

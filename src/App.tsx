@@ -1,11 +1,12 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Armchair, Box, Check, ChevronLeft, CircleHelp, DoorOpen, Footprints, Layers3, LayoutGrid, Lightbulb, Maximize2, Moon, MousePointer2, Paintbrush, PanelTop, Redo2, RotateCcw, RotateCw, Ruler, Search, Sun, Trash2, Undo2, X } from 'lucide-react';
+import { Armchair, Box, Check, ChevronLeft, CircleHelp, DoorOpen, Eye, EyeOff, ImagePlus, Move, Footprints, Layers3, LayoutGrid, Lightbulb, Maximize2, Moon, MousePointer2, Paintbrush, PanelTop, Redo2, RotateCcw, RotateCw, Ruler, Search, Sun, Trash2, Undo2, X } from 'lucide-react';
 import { useEditor, installKeyboardShortcuts } from './state/editor';
-import { TEMPLATES } from './domain/templates';
+import { templatesForChoice } from './domain/templates';
+import { readPlanImage } from './state/underlay';
 import { CATALOG, FLOOR_COLORS, WALL_COLORS, getCatalogItem } from './domain/catalog';
 import { getGrossArea, getNetArea, getRoomArea, getRoomBounds, getWallSegment, parseCm, wallRoomIds } from './domain/geometry';
-import type { Apartment, FloorKind, FurnitureInstance, Opening, Room } from './domain/types';
+import type { Apartment, FloorKind, FurnitureInstance, Opening, Room, RoomChoice } from './domain/types';
 import Plan2D from './components/Plan2D';
 import FurnitureThumb from './components/FurnitureThumb';
 const Scene3D=lazy(()=>import('./components/Scene3D'));
@@ -20,6 +21,8 @@ const STEP_ORDER={start:0,layouts:0,geometry:1,interior:2} as const;
 const plural=(n:number,[one,few,many]:[string,string,string])=>{const a=Math.abs(n)%100,b=a%10;return a>10&&a<20?many:b===1?one:b>=2&&b<=4?few:many};
 const ROOM_WORDS:[string,string,string]=['помещение','помещения','помещений'];
 const ITEM_WORDS:[string,string,string]=['предмет','предмета','предметов'];
+const ROOM_COUNT_WORDS:[string,string,string]=['комната','комнаты','комнат'];
+const ROOM_CHOICES:RoomChoice[]=[0,1,2,3,4];
 
 function Brand(){const back=useEditor(s=>s.setStep);return <button className="brand" onClick={()=>back('start')} aria-label="3D Room, к выбору квартиры"><span className="brand-mark"><Box size={23} strokeWidth={1.5}/></span><span>3D<span className="brand-light">Room</span></span></button>}
 function IconButton({label,children,onClick,disabled=false,selected=false}:{label:string;children:ReactNode;onClick:()=>void;disabled?:boolean;selected?:boolean}){return <button className={`icon-button${selected?' selected':''}`} title={label} aria-label={label} disabled={disabled} onClick={onClick}>{children}</button>}
@@ -45,13 +48,48 @@ function App(){
   </div>
 }
 
+function usePlanPhoto(){
+  const attach=useEditor(s=>s.attachUnderlay),setNotice=useEditor(s=>s.setNotice);const input=useRef<HTMLInputElement>(null);const [busy,setBusy]=useState(false);
+  const load=async(file?:File|null)=>{if(!file)return;setBusy(true);try{attach(await readPlanImage(file))}catch(error){setNotice(error instanceof Error?error.message:'Не удалось открыть изображение.')}finally{setBusy(false);if(input.current)input.current.value=''}};
+  const picker=<input ref={input} type="file" accept="image/*" className="visually-hidden" tabIndex={-1} aria-hidden="true" onChange={e=>load(e.target.files?.[0])}/>;
+  return {picker,open:()=>input.current?.click(),load,busy};
+}
+function PlanPhotoField(){
+  const underlay=useEditor(s=>s.underlay),remove=useEditor(s=>s.removeUnderlay);const {picker,open,load,busy}=usePlanPhoto();const [over,setOver]=useState(false);
+  return <div className="photo-field">{picker}<p className="photo-field-label">Фото планировки <span>необязательно</span></p>
+    {underlay?<div className="photo-chip"><img src={underlay.url} alt="Загруженный план квартиры"/><div className="photo-chip-text"><strong title={underlay.name}>{underlay.name}</strong><small>{underlay.widthPx} × {underlay.heightPx} пикс.</small></div><IconButton label="Убрать фото" onClick={remove}><X size={16}/></IconButton></div>
+    :<button type="button" className={`photo-drop${over?' over':''}`} onClick={open} disabled={busy} onDragOver={e=>{e.preventDefault();setOver(true)}} onDragLeave={()=>setOver(false)} onDrop={e=>{e.preventDefault();setOver(false);load(e.dataTransfer.files[0])}}><ImagePlus size={18}/><span>{busy?'Открываю фото…':'Загрузить фото или скриншот плана'}</span></button>}
+    <p className="field-message">На шаге «Размеры» фото ляжет под план, и стены можно будет выставить по нему.</p></div>
+}
+function UnderlayPanel(){
+  const state=useEditor(),u=state.underlay;const {picker,open,busy}=usePlanPhoto();const [real,setReal]=useState('');
+  const [a,b]=state.calibration;
+  useEffect(()=>{if(a&&b)setReal(String(Math.round(Math.hypot(b.xCm-a.xCm,b.zCm-a.zCm))))},[a,b]);
+  if(!u)return <div className="panel-section underlay-panel">{picker}<h3>Фото планировки</h3><p className="muted">Положите под план фото или скриншот своей квартиры и выставьте стены по нему.</p><button className="button secondary full-width" onClick={open} disabled={busy}><ImagePlus size={16}/>{busy?'Открываю фото…':'Загрузить фото'}</button></div>;
+  const tool=state.underlayTool,apply=()=>{const n=parseCm(real,1,5000);if(n===null){state.setNotice('Введите расстояние от 1 до 5000 см.');return}state.applyCalibration(n)};
+  return <div className="panel-section underlay-panel">{picker}
+    <div className="underlay-head"><h3>Фото планировки</h3><IconButton label={u.visible?'Скрыть фото':'Показать фото'} onClick={()=>state.updateUnderlay({visible:!u.visible})}>{u.visible?<Eye size={17}/>:<EyeOff size={17}/>}</IconButton></div>
+    <ol className="underlay-steps">
+      <li><button className={tool==='calibrate'?'active':''} aria-pressed={tool==='calibrate'} disabled={!u.visible} onClick={()=>state.setUnderlayTool(tool==='calibrate'?'none':'calibrate')}><Ruler size={16}/>Задать масштаб</button>
+        {tool==='calibrate'&&<div className="calibration-form">{state.calibration.length<2?<p>Отметьте на плане две точки на фото с известным расстоянием, например концы стены с подписанным размером.</p>:<form onSubmit={e=>{e.preventDefault();apply()}}><label className="field"><span>Расстояние между точками, см</span><input inputMode="decimal" autoFocus value={real} onChange={e=>setReal(e.target.value)}/></label><div className="calibration-actions"><button className="button primary" type="submit">Применить</button><button className="button ghost" type="button" onClick={()=>state.setUnderlayTool('calibrate')}>Отметить заново</button></div></form>}</div>}</li>
+      <li><button className={tool==='move'?'active':''} aria-pressed={tool==='move'} disabled={!u.visible} onClick={()=>state.setUnderlayTool(tool==='move'?'none':'move')}><Move size={16}/>Совместить с планом</button></li>
+      <li><p>Перетащите стены плана по линиям фото.</p></li>
+    </ol>
+    <div className="underlay-options">
+      <div className="time-label"><label htmlFor="underlay-opacity">Прозрачность фото</label><output htmlFor="underlay-opacity">{Math.round(u.opacity*100)}%</output></div>
+      <input id="underlay-opacity" type="range" min="0.15" max="1" step="0.05" value={u.opacity} onChange={e=>state.updateUnderlay({opacity:Number(e.target.value)})}/>
+      <button className={`light-toggle${u.invert?' on':''}`} role="switch" aria-checked={u.invert} onClick={()=>state.updateUnderlay({invert:!u.invert})}><span>Синие линии на тёмном фоне</span><i aria-hidden="true"/></button>
+      <div className="underlay-actions"><button className="button secondary" onClick={state.turnUnderlay}><RotateCw size={15}/>90°</button><button className="button secondary" onClick={state.refitUnderlay}>Вписать</button><button className="button secondary" onClick={open} disabled={busy}>Заменить</button><button className="button ghost danger-text" onClick={state.removeUnderlay}><Trash2 size={15}/>Убрать</button></div>
+    </div>
+  </div>
+}
 function ProjectTitle(){const project=useEditor(s=>s.project);if(!project)return null;return <div className="project-title"><h1 className="project-title-name">{project.name}</h1><span className="project-title-meta"><span>{formatArea(getNetArea(project))}</span><span>{project.rooms.length} {plural(project.rooms.length,ROOM_WORDS)}</span></span></div>}
 function ProjectActions(){const state=useEditor();const geometry=state.step==='geometry';return <div className="toolbar-actions"><div className="history-buttons"><IconButton label="Отменить действие, Ctrl+Z" onClick={state.undo} disabled={!state.history.length}><Undo2 size={18}/></IconButton><IconButton label="Повторить действие, Ctrl+Y" onClick={state.redo} disabled={!state.future.length}><Redo2 size={18}/></IconButton></div>{geometry?<button className="button primary" onClick={()=>{state.cancelGeometry();state.setStep('interior')}}><Armchair size={17}/>К интерьеру</button>:<button className="button secondary" onClick={()=>state.setStep('geometry')}><Ruler size={17}/>Размеры квартиры</button>}</div>}
 
 function Start(){
   const state=useEditor();const [chosen,setChosen]=useState(state.project?.templateId??'');const [replace,setReplace]=useState<string|null>(null);const [areaError,setAreaError]=useState('');
   const requested=Number(state.requestedArea.replace(',','.'));
-  const templates=TEMPLATES.filter(t=>t.livingRooms===state.livingRooms).sort((a,b)=>Math.abs(getNetArea(a.apartment)-requested)-Math.abs(getNetArea(b.apartment)-requested));
+  const templates=templatesForChoice(state.livingRooms).sort((a,b)=>Math.abs(getNetArea(a.apartment)-requested)-Math.abs(getNetArea(b.apartment)-requested));
   const current=templates.find(t=>t.id===chosen)??templates[0];
   const choosing=state.step==='layouts';
   const next=()=>{if(!Number.isFinite(requested)||requested<=0){setAreaError('Введите площадь больше 0 м², например 65.');return}setAreaError('');setChosen(templates[0].id);state.setStep('layouts')};
@@ -59,9 +97,10 @@ function Start(){
   return <main className="start-page">
     <section className="start-form" aria-labelledby="start-heading">
       <div className="start-heading"><h1 id="start-heading">{choosing?'Выберите похожую планировку':'Создайте план квартиры'}</h1><p className="intro">{choosing?'Это отправная точка. Размеры комнат, окон и дверей уточняются на следующем шаге.':'Укажите количество жилых комнат и примерную площадь. Начнём с пустой квартиры.'}</p></div>
-      <fieldset className="room-count"><legend>Жилые комнаты</legend><div className="room-choices">{([1,2,3] as const).map(n=><button key={n} className={state.livingRooms===n?'room-choice selected':'room-choice'} aria-pressed={state.livingRooms===n} onClick={()=>{state.setLivingRooms(n);setChosen('')}}><span className="room-choice-number">{n}</span><span>{n===1?'комната':'комнаты'}</span>{state.livingRooms===n&&<Check size={14} aria-hidden="true"/>}</button>)}</div></fieldset>
+      <fieldset className="room-count"><legend>Жилые комнаты</legend><div className="room-choices">{ROOM_CHOICES.map(n=><button key={n} className={`room-choice${n===0?' studio':''}${state.livingRooms===n?' selected':''}`} aria-pressed={state.livingRooms===n} aria-label={n===0?'Студия':`${n} ${plural(n,ROOM_COUNT_WORDS)}`} onClick={()=>{state.setLivingRooms(n);setChosen('')}}><span className="room-choice-number" aria-hidden="true">{n===0?'Студия':n}</span>{state.livingRooms===n&&<Check size={14} aria-hidden="true"/>}</button>)}</div></fieldset>
       <div className="field area-field"><label htmlFor="requested-area">Примерная площадь, м²</label><input id="requested-area" inputMode="decimal" value={state.requestedArea} aria-invalid={!!areaError} aria-describedby="area-help" onChange={e=>{state.setArea(e.target.value);if(areaError)setAreaError('')}} onKeyDown={e=>{if(e.key==='Enter')next()}}/><p className={areaError?'field-message error':'field-message'} id="area-help">{areaError||'Чистая площадь помещений, без толщины стен.'}</p></div>
       <div className="start-actions"><button className="button primary large" onClick={()=>choosing?create():next()}>{choosing?'Настроить квартиру':'Показать планировки'}</button>{choosing&&<button className="button secondary" onClick={()=>state.setStep('start')}>Изменить параметры</button>}</div>
+      <PlanPhotoField/>
       <div className="start-footnote"><Ruler size={18}/><p>Размеры можно менять. <br/>Мебель добавите после настройки плана.</p></div>
       {state.project&&<button className="resume-project" onClick={()=>state.setStep('interior')}>Вернуться к текущему проекту</button>}
     </section>
@@ -91,12 +130,13 @@ function Editor(){
   const qualityVisible=state.quality.running||state.quality.complete;
   return <main className="editor-main">
     <div className="workspace">
-      <aside className="left-panel">{geometry?<><div className="panel-heading"><h2>Помещения</h2><p>Выберите комнату или стену на плане.</p></div><RoomList project={project}/><div className="panel-section geometry-area-note"><p className="eyebrow">Площадь со стенами</p><strong>{formatArea(getGrossArea(project))}</strong><p className="muted">По внешнему контуру квартиры.</p></div><div className="panel-bottom-note"><Ruler size={18}/><span>Перегородка общая для соседних комнат. Изменения видны до применения.</span></div></>:<><div className="panel-tabs" role="tablist" aria-label="Обустройство комнаты"><button role="tab" aria-selected={tab==='furniture'} className={tab==='furniture'?'active':''} onClick={()=>setTab('furniture')}><Armchair size={17}/>Мебель</button><button role="tab" aria-selected={tab==='materials'} className={tab==='materials'?'active':''} onClick={()=>setTab('materials')}><Paintbrush size={17}/>Отделка</button></div>{tab==='furniture'?<Catalog room={active}/>:<Materials room={active}/>}</>}</aside>
+      <aside className="left-panel">{geometry?<><div className="panel-heading"><h2>Помещения</h2><p>Выберите комнату или стену на плане.</p></div><RoomList project={project}/><UnderlayPanel/><div className="panel-section geometry-area-note"><p className="eyebrow">Площадь со стенами</p><strong>{formatArea(getGrossArea(project))}</strong><p className="muted">По внешнему контуру квартиры.</p></div><div className="panel-bottom-note"><Ruler size={18}/><span>Перегородка общая для соседних комнат. Изменения видны до применения.</span></div></>:<><div className="panel-tabs" role="tablist" aria-label="Обустройство комнаты"><button role="tab" aria-selected={tab==='furniture'} className={tab==='furniture'?'active':''} onClick={()=>setTab('furniture')}><Armchair size={17}/>Мебель</button><button role="tab" aria-selected={tab==='materials'} className={tab==='materials'?'active':''} onClick={()=>setTab('materials')}><Paintbrush size={17}/>Отделка</button></div>{tab==='furniture'?<Catalog room={active}/>:<Materials room={active}/>}</>}</aside>
       <section className="canvas-column" aria-label={geometry?'Настройка геометрии':'Редактор интерьера'}>
         <div className="canvas-toolbar"><div className="canvas-heading"><span>{geometry?'План квартиры':active.name}</span>{!geometry&&<span className="canvas-room-area">{formatArea(getRoomArea(project,active.id))}</span>}</div>{geometry?<span className="toolbar-caption">Размеры в сантиметрах</span>:<div className="view-switch" aria-label="Отображение редактора"><button className={state.viewMode==='2d'?'active':''} aria-label="Показать 2D-план" aria-pressed={state.viewMode==='2d'} title="2D-план" onClick={()=>state.setView('2d')}><PanelTop size={18}/><span>2D</span></button><button className={state.viewMode==='3d'?'active':''} aria-label="Показать 3D-сцену" aria-pressed={state.viewMode==='3d'} title="3D-сцена" onClick={()=>state.setView('3d')}><Box size={18}/><span>3D</span></button><button className={state.viewMode==='split'?'active':''} aria-label="Показать план и 3D вместе" aria-pressed={state.viewMode==='split'} title="План и 3D" onClick={()=>state.setView('split')}><Layers3 size={18}/></button></div>}</div>
         <div className={`canvas-content ${geometry?'geometry-canvas':`view-${state.viewMode}`}`}>
           {(geometry||state.viewMode!=='3d')&&<div className="plan-pane"><Plan2D fitActive={!geometry}/>{!geometry&&<button className="canvas-tag" onClick={state.toggleOverview}><Maximize2 size={15}/>{state.planOverview?'Активная комната':'Вся квартира'}</button>}</div>}
           {!geometry&&state.viewMode!=='2d'&&<div className="scene-pane"><Suspense fallback={<div className="scene-loading"><Box size={28}/><p>Подготовка 3D-сцены</p><span>Геометрия, материалы и освещение</span></div>}><Scene3D/></Suspense><div className="scene-actions"><button className={`button canvas-button${state.walking?' selected':''}`} aria-pressed={state.walking} onClick={()=>{state.cancelDraft();state.setWalking(!state.walking)}} disabled={qualityVisible||state.webglAvailable!==true} title={state.webglAvailable===false?'Прогулка требует доступного WebGL':undefined}><Footprints size={16}/>{state.walking?'Завершить прогулку':'Прогулка'}</button><button className="button canvas-button" onClick={()=>{state.cancelDraft();state.setQuality(true)}} disabled={state.walking||qualityVisible||state.webglAvailable!==true} title={state.webglAvailable===false?'Качественный снимок требует доступного WebGL':undefined}><Box size={16}/>Качественный снимок</button></div>{qualityVisible&&<div className="quality-panel" role="status"><strong>{state.quality.complete?'Снимок готов':'Построение снимка'}</strong><span>{numberFormat.format(state.quality.samples)} из 96 выборок · {numberFormat.format(state.quality.seconds)} с</span><progress aria-label="Построение качественного снимка" max={96} value={state.quality.samples}/><button className="button secondary" onClick={()=>state.setQuality(false)}>{state.quality.complete?'Вернуться в редактор':'Отменить снимок'}</button></div>}</div>}
+          {geometry&&state.underlayTool!=='none'&&<div className="placement-banner" role="status">{state.underlayTool==='move'?<Move size={18}/>:<Ruler size={18}/>}<span>{state.underlayTool==='move'?'Перетащите фото, чтобы его стены совпали с планом':state.calibration.length<2?`Отметьте на фото ${state.calibration.length?'вторую точку':'две точки с известным расстоянием'}`:'Введите расстояние между точками слева'}</span><button className="button ghost" onClick={()=>state.setUnderlayTool('none')}>{state.underlayTool==='move'?'Готово':'Отмена'} <kbd>Esc</kbd></button></div>}
           {state.placement&&<div className="placement-banner"><MousePointer2 size={18}/><span>Укажите место для предмета «{getCatalogItem(state.placement).name}»</span><button className="button ghost" onClick={state.cancelDraft}>Отмена <kbd>Esc</kbd></button></div>}
           {geometry&&state.geometryPreview&&!state.geometryPreview.validation.valid&&<div className="validation-message" role="alert">{state.geometryPreview.validation.reason}</div>}
           {state.draft&&!state.draftValidation.valid&&<div className="validation-message" role="alert">{state.draftValidation.reason}</div>}
